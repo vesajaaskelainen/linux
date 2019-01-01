@@ -8,6 +8,12 @@ LED is defined in max_brightness file. The brightness file will set the brightne
 of the LED (taking a value 0-max_brightness). Most LEDs don't have hardware
 brightness support so will just be turned on for non-zero brightness settings.
 
+The class supports multi color element LEDs allowing individual LED element
+color control in collaboration with brigthtness control. User can configure LED
+to specific color by configured individual color elements. Brightness is
+virtual scalar and is used to calculate raw color element value. Raw color
+element values are used to configure physical color elements in LEDs.
+
 The class also introduces the optional concept of an LED trigger. A trigger
 is a kernel based source of led events. Triggers can either be simple or
 complex. A simple trigger isn't configurable and is designed to slot into
@@ -65,6 +71,18 @@ LED subsystem core exposes following API for setting brightness:
 		blinking, returns -EBUSY if software blink fallback is enabled.
 
 
+Multi color element API
+=======================
+
+LED subsystem core exposes following API for managing multi color element LEDs:
+
+    - led_color_element_setup_of : is a helper for configuring color element
+		in led core based on device tree settings.
+    - led_scale_color_elements : for scaling color elements based on brightness
+		value. Used by drivers when they need to have fresh raw color element
+		values.
+
+
 LED registration API
 ====================
 
@@ -79,6 +97,10 @@ wants to have a brightness_hw_changed attribute then the LED_BRIGHT_HW_CHANGED
 flag must be set in flags before registering. Calling
 led_classdev_notify_brightness_hw_changed on a classdev not registered with
 the LED_BRIGHT_HW_CHANGED flag is a bug and will trigger a WARN_ON.
+
+If the driver supports multi color element LEDs it needs to configure
+led device with LED_MULTI_COLOR_LED in flags.
+
 
 Hardware accelerated blink of LEDs
 ==================================
@@ -101,6 +123,36 @@ delay_off parameters to the leds subsystem.
 Setting the brightness to zero with brightness_set() callback function
 should completely turn off the LED and cancel the previously programmed
 hardware blinking function, if any.
+
+
+Multi color element support
+===========================
+
+To enable multi color element support it needs to be enabled with
+LEDS_MULTI_COLOR in kernel config.
+
+Multi color leds need to be pre-configured in ledclass structures before
+registering new LED to LED core. LED core provides helper
+led_color_element_setup_of to help in defining settings based on device tree
+configuration.
+
+Driver needs to set/calculate proper values for individual color elements based
+on use configuration. User has ability to configure individual color elements
+and overall brightness of the LED. LED core supports virtual brightness support
+and provides helper led_scale_color_elements for LED drivers for linearly scaling
+indivudual color elements.
+
+From user space multi color element LEDs can be configured using sysfs entries:
+
+    - color : current multi color element values with encoding:
+		brightness=<value> [<color element>=<value> ...]
+		Individual settings can be changed or all settings at once.
+		Reading the sysfs entry provides current settings in use.
+    - max_color : maximul values for multi color elements with encoding:
+		brightness=<max value> [<color element>=<max value> ...]
+
+Multi color element LEDs support also triggers as control brightness value and
+that will cause new color element values to be controlled.
 
 
 Known Issues

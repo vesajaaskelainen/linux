@@ -34,6 +34,16 @@ enum led_brightness {
 	LED_FULL	= 255,
 };
 
+#ifdef CONFIG_LEDS_MULTI_COLOR
+struct led_color_element {
+	const char	*name;
+
+	unsigned int	value;
+	unsigned int	max_value;
+	unsigned int	raw_value;
+};
+#endif
+
 struct led_classdev {
 	const char		*name;
 	enum led_brightness	 brightness;
@@ -51,7 +61,9 @@ struct led_classdev {
 #define LED_PANIC_INDICATOR	BIT(20)
 #define LED_BRIGHT_HW_CHANGED	BIT(21)
 #define LED_RETAIN_AT_SHUTDOWN	BIT(22)
-
+#ifdef CONFIG_LEDS_MULTI_COLOR
+#define LED_MULTI_COLOR_LED	BIT(23)
+#endif
 	/* set_brightness_work / blink_timer flags, atomic, private. */
 	unsigned long		work_flags;
 
@@ -124,6 +136,10 @@ struct led_classdev {
 	struct kernfs_node	*brightness_hw_changed_kn;
 #endif
 
+#ifdef CONFIG_LEDS_MULTI_COLOR
+	unsigned int		num_color_elements;
+	struct led_color_element *color_elements;
+#endif
 	/* Ensures consistent access to the LED Flash Class device */
 	struct mutex		led_access;
 };
@@ -216,6 +232,35 @@ extern int led_set_brightness_sync(struct led_classdev *led_cdev,
  * Returns: 0 on success or negative error value on failure
  */
 extern int led_update_brightness(struct led_classdev *led_cdev);
+
+#ifdef CONFIG_LEDS_MULTI_COLOR
+/**
+ * led_color_element_setup_of - configure color element from device tree
+ * @dev: the parent LED device for allocations
+ * @led_cdev: the LED to update
+ * @elem_index: color element index to configure
+ * @elem_child: child node in device tree having settings
+ *
+ * Reads settings from device tree and configured color element based on it.
+ *
+ * Returns: 0 on success, or negative error value on failure.
+ */
+extern int led_color_element_setup_of(struct device *dev,
+				      struct led_classdev *led_cdev,
+				      unsigned int elem_index,
+				      struct device_node *elem_child);
+
+/**
+ * led_scale_elements - update color element raw values
+ * @led_cdev: the LED to update
+ * @brightness: the brightness to set it to
+ *
+ * Scales color elements based on brightness value and updates
+ * color element's raw_value field to
+ */
+extern void led_scale_color_elements(struct led_classdev *led_cdev,
+				     enum led_brightness brightness);
+#endif
 
 /**
  * led_sysfs_disable - disable LED sysfs interface

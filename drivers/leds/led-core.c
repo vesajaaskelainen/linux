@@ -17,6 +17,7 @@
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/rwsem.h>
+#include <linux/of.h>
 #include "leds.h"
 
 DECLARE_RWSEM(leds_list_lock);
@@ -309,6 +310,68 @@ int led_update_brightness(struct led_classdev *led_cdev)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(led_update_brightness);
+
+#ifdef CONFIG_LEDS_MULTI_COLOR
+int led_color_element_setup_of(struct device *dev,
+			       struct led_classdev *led_cdev,
+			       unsigned int elem_index,
+			       struct device_node *elem_child)
+{
+	struct led_color_element *color_element;
+	const char *elem_name;
+	u32 max_value;
+	u32 default_value;
+	int ret;
+
+	if (elem_index > led_cdev->num_color_elements)
+		return -EFAULT;
+
+	if (strncmp(elem_child->name, "element-", 8))
+		return -EINVAL;
+
+	elem_name = &elem_child->name[8];
+
+	if (strlen(elem_name) == 0)
+		return -EINVAL;
+
+	color_element = &led_cdev->color_elements[elem_index];
+
+	color_element->name = devm_kstrdup(dev, elem_name, GFP_KERNEL);
+
+	ret = of_property_read_u32(elem_child, "max-value", &max_value);
+	if (ret == 0)
+		color_element->max_value = max_value;
+
+	ret = of_property_read_u32(elem_child, "default-value", &default_value);
+	if (ret == 0)
+		color_element->value = default_value;
+
+	if (!color_element->max_value)
+		color_element->max_value = LED_FULL;
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(led_color_element_setup_of);
+
+void led_scale_color_elements(struct led_classdev *led_cdev,
+			      enum led_brightness brightness)
+{
+	unsigned long long max = led_cdev->max_brightness;
+	unsigned int i;
+
+	for (i = 0; i < led_cdev->num_color_elements; i++) {
+		unsigned long long value;
+
+		value = led_cdev->color_elements[i].value;
+
+		value *= brightness;
+		do_div(value, max);
+
+		led_cdev->color_elements[i].raw_value = (unsigned int)value;
+	}
+}
+EXPORT_SYMBOL_GPL(led_scale_color_elements);
+#endif
 
 /* Caller must ensure led_cdev->led_access held */
 void led_sysfs_disable(struct led_classdev *led_cdev)
