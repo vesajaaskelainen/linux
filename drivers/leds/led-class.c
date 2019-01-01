@@ -74,6 +74,241 @@ static ssize_t max_brightness_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(max_brightness);
 
+#ifdef CONFIG_LEDS_MULTI_COLOR
+static ssize_t brightness_model_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	enum led_brightness_model brightness_model;
+
+	brightness_model = led_cdev->brightness_model;
+
+	*buf = 0;
+
+	if (brightness_model == LED_BRIGHTNESS_MODEL_HARDWARE)
+		strlcat(buf, "[hardware] ", PAGE_SIZE);
+	else
+		strlcat(buf, "hardware ", PAGE_SIZE);
+
+	if (brightness_model == LED_BRIGHTNESS_MODEL_ONOFF)
+		strlcat(buf, "[onoff] ", PAGE_SIZE);
+	else
+		strlcat(buf, "onoff ", PAGE_SIZE);
+
+	if (brightness_model == LED_BRIGHTNESS_MODEL_LINEAR)
+		strlcat(buf, "[linear]\n", PAGE_SIZE);
+	else
+		strlcat(buf, "linear\n", PAGE_SIZE);
+
+	return strlen(buf);
+}
+
+static ssize_t brightness_model_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	enum led_brightness brightness;
+	ssize_t ret = -EINVAL;
+
+	mutex_lock(&led_cdev->led_access);
+
+	if (led_sysfs_is_disabled(led_cdev)) {
+		ret = -EBUSY;
+		goto unlock;
+	}
+
+	brightness = led_cdev->brightness;
+
+	if (sysfs_streq(buf, "hardware")) {
+		led_cdev->brightness_model = LED_BRIGHTNESS_MODEL_HARDWARE;
+		ret = size;
+	}
+
+	if (sysfs_streq(buf, "onoff")) {
+		led_cdev->brightness_model = LED_BRIGHTNESS_MODEL_ONOFF;
+		ret = size;
+	}
+
+	if (sysfs_streq(buf, "linear")) {
+		led_cdev->brightness_model = LED_BRIGHTNESS_MODEL_LINEAR;
+		ret = size;
+	}
+
+	if (ret > 0)
+		led_set_brightness(led_cdev, brightness);
+
+unlock:
+	mutex_unlock(&led_cdev->led_access);
+	return ret;
+}
+static DEVICE_ATTR_RW(brightness_model);
+
+static int set_color_element_value(struct led_classdev *led_cdev,
+				   int element_index,
+				   unsigned long value)
+{
+	if (element_index < 0 || element_index >= led_cdev->num_color_elements)
+		return -ENOENT;
+
+	led_cdev->color_elements[element_index].value = min_t(unsigned int,
+		value, led_cdev->color_elements[element_index].max_value);
+
+	return 0;
+}
+
+static ssize_t color_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	unsigned int i;
+	ssize_t len;
+
+	*buf = 0;
+	len = 0;
+	for (i = 0; i < led_cdev->num_color_elements; i++) {
+		if (i)
+			len += scnprintf(buf + len, PAGE_SIZE - len, " ");
+		len += scnprintf(buf + len, PAGE_SIZE - len, "%u",
+				 led_cdev->color_elements[i].value);
+	}
+	len += scnprintf(buf + len, PAGE_SIZE - len, "\n");
+
+	return len;
+}
+
+static ssize_t color_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t size)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	unsigned long val;
+	unsigned long brightness;
+	ssize_t ret;
+	char *bufcopy = 0;
+	char *value;
+	char *ptr;
+	int element_index = 0;
+
+	mutex_lock(&led_cdev->led_access);
+
+	if (led_sysfs_is_disabled(led_cdev)) {
+		ret = -EBUSY;
+		goto unlock;
+	}
+
+	brightness = led_cdev->brightness;
+
+	bufcopy = kstrdup(buf, GFP_KERNEL);
+	ptr = bufcopy;
+
+	while ((value = strsep(&ptr, " "))) {
+		if (element_index < led_cdev->num_color_elements) {
+			ret = kstrtoul(value, 10, &val);
+			if (ret)
+				goto unlock;
+
+			ret = set_color_element_value(led_cdev,
+						      element_index,
+						      val);
+			if (ret)
+				goto unlock;
+		} else if (element_index == led_cdev->num_color_elements) {
+			ret = kstrtoul(value, 10, &brightness);
+			if (ret)
+				goto unlock;
+		} else {
+			ret = -EINVAL;
+			goto unlock;
+		}
+
+		element_index++;
+	}
+
+	led_set_brightness(led_cdev, brightness);
+
+	ret = size;
+unlock:
+	kfree(bufcopy);
+	mutex_unlock(&led_cdev->led_access);
+	return ret;
+}
+static DEVICE_ATTR_RW(color);
+
+static ssize_t color_names_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	unsigned int i;
+
+	*buf = 0;
+	for (i = 0; i < led_cdev->num_color_elements; i++) {
+		if (i)
+			strlcat(buf, " ", PAGE_SIZE);
+		strlcat(buf, led_cdev->color_elements[i].name, PAGE_SIZE);
+	}
+	strlcat(buf, "\n", PAGE_SIZE);
+
+	return strlen(buf);
+}
+static DEVICE_ATTR_RO(color_names);
+
+static ssize_t max_color_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct led_classdev *led_cdev = dev_get_drvdata(dev);
+	unsigned int i;
+	ssize_t len;
+
+	*buf = 0;
+	len = 0;
+	for (i = 0; i < led_cdev->num_color_elements; i++) {
+		if (i)
+			len += scnprintf(buf + len, PAGE_SIZE - len, " ");
+		len += scnprintf(buf + len, PAGE_SIZE - len, "%u",
+				 led_cdev->color_elements[i].max_value);
+	}
+	len += scnprintf(buf + len, PAGE_SIZE - len, "\n");
+
+	return len;
+}
+static DEVICE_ATTR_RO(max_color);
+
+static struct attribute *led_multi_color_attrs[] = {
+	&dev_attr_brightness_model.attr,
+	&dev_attr_color.attr,
+	&dev_attr_color_names.attr,
+	&dev_attr_max_color.attr,
+	NULL,
+};
+
+static const struct attribute_group led_multi_color_group = {
+	.attrs = led_multi_color_attrs,
+};
+
+static const struct attribute_group *led_multi_color_groups[] = {
+	&led_multi_color_group,
+	NULL,
+};
+
+static int led_add_multi_color_led(struct led_classdev *led_cdev)
+{
+	struct device *dev = led_cdev->dev;
+	int ret;
+
+	ret = device_add_groups(dev, led_multi_color_groups);
+	if (ret) {
+		dev_err(dev, "Error creating multi-color-led sysfs nodes\n");
+		return ret;
+	}
+
+	return 0;
+}
+
+static void led_remove_multi_color_led(struct led_classdev *led_cdev)
+{
+	device_remove_groups(led_cdev->dev, led_multi_color_groups);
+}
+#endif
+
 #ifdef CONFIG_LEDS_TRIGGERS
 static DEVICE_ATTR(trigger, 0644, led_trigger_show, led_trigger_store);
 static struct attribute *led_trigger_attrs[] = {
@@ -283,6 +518,17 @@ int of_led_classdev_register(struct device *parent, struct device_node *np,
 		}
 	}
 
+#ifdef CONFIG_LEDS_MULTI_COLOR
+	if (led_cdev->flags & LED_MULTI_COLOR_LED) {
+		ret = led_add_multi_color_led(led_cdev);
+		if (ret) {
+			device_unregister(led_cdev->dev);
+			mutex_unlock(&led_cdev->led_access);
+			return ret;
+		}
+	}
+#endif
+
 	led_cdev->work_flags = 0;
 #ifdef CONFIG_LEDS_TRIGGERS
 	init_rwsem(&led_cdev->trigger_lock);
@@ -338,6 +584,11 @@ void led_classdev_unregister(struct led_classdev *led_cdev)
 	led_set_brightness(led_cdev, LED_OFF);
 
 	flush_work(&led_cdev->set_brightness_work);
+
+#ifdef CONFIG_LEDS_MULTI_COLOR
+	if (led_cdev->flags & LED_MULTI_COLOR_LED)
+		led_remove_multi_color_led(led_cdev);
+#endif
 
 	if (led_cdev->flags & LED_BRIGHT_HW_CHANGED)
 		led_remove_brightness_hw_changed(led_cdev);

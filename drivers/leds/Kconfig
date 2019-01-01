@@ -38,6 +38,15 @@ config LEDS_BRIGHTNESS_HW_CHANGED
 
 	  See Documentation/ABI/testing/sysfs-class-led for details.
 
+config LEDS_MULTI_COLOR
+	bool "LED Multi-color Support"
+	depends on LEDS_CLASS
+	help
+	  This option enables multi-color led sysfs class in /sys/class/leds.
+	  It wrapps LED Class and adds multi-color LEDs specific sysfs attributes
+	  and kernel internal API to it. You'll need this to provide support
+	  for multi-color related features of a LED device.
+
 comment "LED drivers"
 
 config LEDS_88PM860X
