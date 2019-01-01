@@ -6,7 +6,11 @@ Required properties:
 Each LED is represented as a sub-node of the pwm-leds device.  Each
 node's name represents the name of the corresponding LED.
 
-LED sub-node properties:
+PWM LEDs support both mono color and multi color element LEDs. Multi color LEDs
+are defined with element-<name> child nodes while mono color LEDs do not have
+those entries.
+
+Mono color LED sub-node properties:
 - pwms : PWM property to point to the PWM device (phandle)/port (id) and to
   specify the period time to be used: <&phandle id period_ns>;
 - pwm-names : (optional) Name to be used by the PWM subsystem for the PWM device
@@ -19,6 +23,24 @@ LED sub-node properties:
   see Documentation/devicetree/bindings/leds/common.txt
 - linux,default-trigger :  (optional)
   see Documentation/devicetree/bindings/leds/common.txt
+
+Multi color LED sub-node properties:
+- max-brightness : Maximum brightness possible for the LED
+- label :  (optional)
+  see Documentation/devicetree/bindings/leds/common.txt
+- linux,default-trigger :  (optional)
+  see Documentation/devicetree/bindings/leds/common.txt
+- element-<color element name> : One or more color elements can be defined for
+  multi color LEDs. Property is type of multi color element sub-node.
+
+Multi color element sub-node properties:
+- pwms : PWM property to point to the PWM device (phandle)/port (id) and to
+  specify the period time to be used: <&phandle id period_ns>;
+- pwm-names : (optional) Name to be used by the PWM subsystem for the PWM device
+  For the pwms and pwm-names property please refer to:
+  Documentation/devicetree/bindings/pwm/pwm.txt
+- active-low : (optional) For PWMs where the LED is wired to supply
+  rather than ground.
 
 Example:
 
@@ -46,5 +68,23 @@ pwmleds {
 		label = "omap4:green:chrg";
 		pwms = <&twl_pwmled 0 7812500>;
 		max-brightness = <255>;
+	};
+};
+
+multi-color-leds {
+	compatible = "pwm-leds";
+
+	status-led {
+		label = "status";
+
+		element-red {
+			pwms = <&ehrpwm0 0 100000 0>;
+		};
+		element-green {
+			pwms = <&ehrpwm1 0 100000 0>;
+		};
+		element-blue {
+			pwms = <&ehrpwm1 1 100000 0>;
+		};
 	};
 };

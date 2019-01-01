@@ -22,12 +22,20 @@
 #include <linux/leds_pwm.h>
 #include <linux/slab.h>
 
-struct led_pwm_data {
-	struct led_classdev	cdev;
+struct led_element_pwm {
+	int			element_index;
+
 	struct pwm_device	*pwm;
 	unsigned int		active_low;
 	unsigned int		period;
 	int			duty;
+};
+
+struct led_pwm_data {
+	struct led_classdev	cdev;
+
+	unsigned int		num_elements;
+	struct led_element_pwm	*elements;
 };
 
 struct led_pwm_priv {
@@ -35,16 +43,16 @@ struct led_pwm_priv {
 	struct led_pwm_data leds[0];
 };
 
-static void __led_pwm_set(struct led_pwm_data *led_dat)
+static void __led_element_pwm_set(struct led_element_pwm *elem_pwm)
 {
-	int new_duty = led_dat->duty;
+	int new_duty = elem_pwm->duty;
 
-	pwm_config(led_dat->pwm, new_duty, led_dat->period);
+	pwm_config(elem_pwm->pwm, new_duty, elem_pwm->period);
 
 	if (new_duty == 0)
-		pwm_disable(led_dat->pwm);
+		pwm_disable(elem_pwm->pwm);
 	else
-		pwm_enable(led_dat->pwm);
+		pwm_enable(elem_pwm->pwm);
 }
 
 static int led_pwm_set(struct led_classdev *led_cdev,
@@ -52,18 +60,38 @@ static int led_pwm_set(struct led_classdev *led_cdev,
 {
 	struct led_pwm_data *led_dat =
 		container_of(led_cdev, struct led_pwm_data, cdev);
-	unsigned int max = led_dat->cdev.max_brightness;
-	unsigned long long duty =  led_dat->period;
+	unsigned int raw_value;
+	unsigned int max_value;
+	unsigned long long duty;
+	unsigned int i;
 
-	duty *= brightness;
-	do_div(duty, max);
+	led_scale_color_elements(led_cdev, brightness);
 
-	if (led_dat->active_low)
-		duty = led_dat->period - duty;
+	for (i = 0; i < led_dat->num_elements; i++) {
+		struct led_element_pwm *elem_pwm = &led_dat->elements[i];
+		struct led_color_element *color_element;
+		int element_index = elem_pwm->element_index;
 
-	led_dat->duty = duty;
+		if (element_index < 0)
+			continue;
 
-	__led_pwm_set(led_dat);
+		color_element = &led_cdev->color_elements[element_index];
+
+		raw_value = color_element->raw_value;
+		max_value = color_element->max_value;
+
+		duty = elem_pwm->period;
+
+		duty *= raw_value;
+		do_div(duty, max_value);
+
+		if (elem_pwm->active_low)
+			duty = elem_pwm->period - duty;
+
+		elem_pwm->duty = duty;
+
+		__led_element_pwm_set(elem_pwm);
+	}
 
 	return 0;
 }
@@ -74,20 +102,45 @@ static inline size_t sizeof_pwm_leds_priv(int num_leds)
 		      (sizeof(struct led_pwm_data) * num_leds);
 }
 
+static void led_pwm_data_cleanup(struct led_pwm_data *pwm_data)
+{
+	led_classdev_unregister(&pwm_data->cdev);
+}
+
 static void led_pwm_cleanup(struct led_pwm_priv *priv)
 {
 	while (priv->num_leds--)
-		led_classdev_unregister(&priv->leds[priv->num_leds].cdev);
+		led_pwm_data_cleanup(&priv->leds[priv->num_leds]);
 }
 
-static int led_pwm_add(struct device *dev, struct led_pwm_priv *priv,
-		       struct led_pwm *led, struct device_node *child)
+static int led_pwm_add_single(struct device *dev, struct led_pwm_priv *priv,
+			      struct led_pwm *led, struct device_node *child)
 {
 	struct led_pwm_data *led_data = &priv->leds[priv->num_leds];
+	struct led_color_element *color_element;
 	struct pwm_args pargs;
 	int ret;
 
-	led_data->active_low = led->active_low;
+	led_data->cdev.num_color_elements = 1;
+	led_data->cdev.color_elements = devm_kzalloc(dev,
+		sizeof(struct led_color_element) *
+			led_data->cdev.num_color_elements,
+		GFP_KERNEL);
+
+	led_data->cdev.color_elements[0].name = devm_kstrdup_const(dev,
+								   "single",
+								   GFP_KERNEL);
+
+	led_data->num_elements = led_data->cdev.num_color_elements;
+
+	led_data->elements = devm_kzalloc(dev,
+		sizeof(struct led_element_pwm) * led_data->num_elements,
+		GFP_KERNEL);
+
+	led_data->elements[0].element_index = 0;
+
+	led_data->elements[0].active_low = led->active_low;
+
 	led_data->cdev.name = led->name;
 	led_data->cdev.default_trigger = led->default_trigger;
 	led_data->cdev.brightness = LED_OFF;
@@ -95,11 +148,11 @@ static int led_pwm_add(struct device *dev, struct led_pwm_priv *priv,
 	led_data->cdev.flags = LED_CORE_SUSPENDRESUME;
 
 	if (child)
-		led_data->pwm = devm_of_pwm_get(dev, child, NULL);
+		led_data->elements[0].pwm = devm_of_pwm_get(dev, child, NULL);
 	else
-		led_data->pwm = devm_pwm_get(dev, led->name);
-	if (IS_ERR(led_data->pwm)) {
-		ret = PTR_ERR(led_data->pwm);
+		led_data->elements[0].pwm = devm_pwm_get(dev, led->name);
+	if (IS_ERR(led_data->elements[0].pwm)) {
+		ret = PTR_ERR(led_data->elements[0].pwm);
 		if (ret != -EPROBE_DEFER)
 			dev_err(dev, "unable to request PWM for %s: %d\n",
 				led->name, ret);
@@ -112,13 +165,102 @@ static int led_pwm_add(struct device *dev, struct led_pwm_priv *priv,
 	 * FIXME: pwm_apply_args() should be removed when switching to the
 	 * atomic PWM API.
 	 */
-	pwm_apply_args(led_data->pwm);
+	pwm_apply_args(led_data->elements[0].pwm);
 
-	pwm_get_args(led_data->pwm, &pargs);
+	pwm_get_args(led_data->elements[0].pwm, &pargs);
 
-	led_data->period = pargs.period;
-	if (!led_data->period && (led->pwm_period_ns > 0))
-		led_data->period = led->pwm_period_ns;
+	led_data->elements[0].period = pargs.period;
+	if (!led_data->elements[0].period && (led->pwm_period_ns > 0))
+		led_data->elements[0].period = led->pwm_period_ns;
+
+	ret = led_classdev_register(dev, &led_data->cdev);
+	if (ret == 0) {
+		priv->num_leds++;
+
+		color_element = &led_data->cdev.color_elements[0];
+
+		color_element->value = led_data->cdev.max_brightness;
+		color_element->max_value = led_data->cdev.max_brightness;
+
+		led_pwm_set(&led_data->cdev, led_data->cdev.brightness);
+	} else {
+		dev_err(dev, "failed to register PWM led for %s: %d\n",
+			led->name, ret);
+	}
+
+	return ret;
+}
+
+static int led_pwm_add_multi(struct device *dev, struct led_pwm_priv *priv,
+			     struct led_pwm *led, struct device_node *child,
+			     unsigned int num_color_elements)
+{
+	struct led_pwm_data *led_data = &priv->leds[priv->num_leds];
+	struct pwm_args pargs;
+	unsigned int elem_index;
+	struct device_node *elem_child;
+	int ret;
+
+	led_data->cdev.name = led->name;
+	led_data->cdev.default_trigger = led->default_trigger;
+	led_data->cdev.brightness = LED_OFF;
+	led_data->cdev.max_brightness = led->max_brightness;
+	led_data->cdev.flags = LED_CORE_SUSPENDRESUME | LED_MULTI_COLOR_LED;
+
+	led_data->cdev.num_color_elements = num_color_elements;
+	led_data->cdev.color_elements = devm_kzalloc(dev,
+		sizeof(struct led_color_element) * num_color_elements,
+		GFP_KERNEL);
+
+	led_data->num_elements = num_color_elements;
+	led_data->elements = devm_kzalloc(dev,
+		sizeof(struct led_element_pwm) * num_color_elements,
+		GFP_KERNEL);
+
+	elem_index = 0;
+	for_each_child_of_node(child, elem_child) {
+		if (strncmp(elem_child->name, "element-", 8) == 0) {
+			struct led_element_pwm *led_element;
+
+			ret = led_color_element_setup_of(dev, &led_data->cdev,
+							 elem_index,
+							 elem_child);
+			if (ret)
+				return ret;
+
+			led_element = &led_data->elements[elem_index];
+
+			led_element->element_index = elem_index;
+
+			led_element->active_low = of_property_read_bool(
+				elem_child, "active-low");
+
+			led_element->pwm = devm_of_pwm_get(dev, elem_child,
+							   NULL);
+
+			if (IS_ERR(led_element->pwm)) {
+				ret = PTR_ERR(led_element->pwm);
+				if (ret != -EPROBE_DEFER)
+					dev_err(dev, "unable to request PWM for %s: %d\n",
+						led->name, ret);
+				return ret;
+			}
+
+			/*
+			 * FIXME: pwm_apply_args() should be removed when
+			 * switching to the atomic PWM API.
+			 */
+			pwm_apply_args(led_element->pwm);
+
+			pwm_get_args(led_element->pwm, &pargs);
+
+			led_element->period = pargs.period;
+
+			elem_index++;
+		}
+	}
+
+	led_data->cdev.brightness_set_blocking = led_pwm_set;
 
 	ret = led_classdev_register(dev, &led_data->cdev);
 	if (ret == 0) {
@@ -135,7 +277,9 @@ static int led_pwm_add(struct device *dev, struct led_pwm_priv *priv,
 static int led_pwm_create_of(struct device *dev, struct led_pwm_priv *priv)
 {
 	struct device_node *child;
+	struct device_node *elem_child;
 	struct led_pwm led;
+	int num_color_elements;
 	int ret = 0;
 
 	memset(&led, 0, sizeof(led));
@@ -146,14 +290,32 @@ static int led_pwm_create_of(struct device *dev, struct led_pwm_priv *priv)
 
 		led.default_trigger = of_get_property(child,
 						"linux,default-trigger", NULL);
-		led.active_low = of_property_read_bool(child, "active-low");
 		of_property_read_u32(child, "max-brightness",
 				     &led.max_brightness);
 
-		ret = led_pwm_add(dev, priv, &led, child);
-		if (ret) {
-			of_node_put(child);
-			break;
+		num_color_elements = 0;
+
+		for_each_child_of_node(child, elem_child) {
+			if (strncmp(elem_child->name, "element-", 8) == 0)
+				num_color_elements++;
+		}
+
+		if (num_color_elements) {
+			ret = led_pwm_add_multi(dev, priv, &led, child,
+						num_color_elements);
+			if (ret) {
+				of_node_put(child);
+				break;
+			}
+		} else {
+			led.active_low = of_property_read_bool(child,
+							       "active-low");
+
+			ret = led_pwm_add_single(dev, priv, &led, child);
+			if (ret) {
+				of_node_put(child);
+				break;
+			}
 		}
 	}
 
@@ -182,8 +344,8 @@ static int led_pwm_probe(struct platform_device *pdev)
 
 	if (pdata) {
 		for (i = 0; i < count; i++) {
-			ret = led_pwm_add(&pdev->dev, priv, &pdata->leds[i],
-					  NULL);
+			ret = led_pwm_add_single(&pdev->dev, priv,
+						 &pdata->leds[i], NULL);
 			if (ret)
 				break;
 		}
