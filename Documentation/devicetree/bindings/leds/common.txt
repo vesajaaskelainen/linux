@@ -10,6 +10,12 @@ can influence the way of the LED device initialization, the LED components
 have to be tightly coupled with the LED device binding. They are represented
 by child nodes of the parent LED device binding.
 
+LED devices can have configurable both mono color and multi color element LEDs.
+Multi color element LEDs are defined with element-<name> child nodes while mono
+color LEDs do not have those entries. LED devices having known set of multi
+color element properties do not have specific multi color element settings in
+devicetree.
+
 Optional properties for child nodes:
 - led-sources : List of device current outputs the LED is connected to. The
 		outputs are identified by the numbers that must be defined
@@ -26,6 +32,13 @@ Optional properties for child nodes:
   whatever its current state is, without producing a glitch.  The default is
   off if this property is not present.
 
+- linux,default-brightness-model :  This parameter, if preset is a string
+    defining the brightness model assigned to the LED.  Current brightness
+    models are:
+     "hardware" - LED brightness is adjusted by LED hardware driver
+     "onoff" - LED's brightness value controls multi color element led on/off.
+     "linear" - LED's brightness value is linear scalar for multi color element
+		led.
 - linux,default-trigger :  This parameter, if present, is a
     string defining the trigger assigned to the LED.  Current triggers are:
      "backlight" - LED will act as a back-light, controlled by the framebuffer
@@ -74,6 +87,11 @@ For controllers that have no configurable current the flash-max-microamp
 property can be omitted.
 For controllers that have no configurable timeout the flash-max-timeout-us
 property can be omitted.
+
+Multi color element sub-node properties:
+- max-value :  (optional) Defines maximum value for color element. Used with
+               primarily with devices without defined maximum limit.
+- default-value :  (optional) Defines default value for color element.
 
 * Trigger source providers
 
