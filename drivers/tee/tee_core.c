@@ -125,6 +125,15 @@ static int tee_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+static const char *tee_session_get_application_id(void)
+{
+	return NULL;
+}
+
+static void tee_session_free_application_id(const char *app_id)
+{
+}
+
 /**
  * uuid_v5() - Calculate UUIDv5
  * @uuid: Resulting UUID
@@ -218,6 +227,14 @@ int tee_session_calc_client_uuid(uuid_t *uuid, u32 connection_method,
 	 * For TEEC_LOGIN_GROUP:
 	 * gid=<gid>
 	 *
+	 * For TEEC_LOGIN_APPLICATION:
+	 * app=<application id>
+	 *
+	 * For TEEC_LOGIN_USER_APPLICATION:
+	 * uid=<uid>:app=<application id>
+	 *
+	 * For TEEC_LOGIN_GROUP_APPLICATION:
+	 * gid=<gid>:app=<application id>
 	 */
 
 	name = kzalloc(TEE_UUID_NS_NAME_SIZE, GFP_KERNEL);
@@ -244,6 +261,47 @@ int tee_session_calc_client_uuid(uuid_t *uuid, u32 connection_method,
 
 		name_len = snprintf(name, TEE_UUID_NS_NAME_SIZE, "gid=%x",
 				    grp.val);
+		if (name_len >= TEE_UUID_NS_NAME_SIZE) {
+			rc = -E2BIG;
+			goto out_free_name;
+		}
+		break;
+
+	case TEE_IOCTL_LOGIN_APPLICATION:
+		application_id = tee_session_get_application_id();
+		name_len = snprintf(name, TEE_UUID_NS_NAME_SIZE, "app=%s",
+				    application_id);
+		tee_session_free_application_id(application_id);
+		if (name_len >= TEE_UUID_NS_NAME_SIZE) {
+			rc = -E2BIG;
+			goto out_free_name;
+		}
+		break;
+
+	case TEE_IOCTL_LOGIN_USER_APPLICATION:
+		application_id = tee_session_get_application_id();
+		name_len = snprintf(name, TEE_UUID_NS_NAME_SIZE,
+				    "uid=%x:app=%s", current_euid().val,
+				    application_id);
+		tee_session_free_application_id(application_id);
+		if (name_len >= TEE_UUID_NS_NAME_SIZE) {
+			rc = -E2BIG;
+			goto out_free_name;
+		}
+		break;
+
+	case TEE_IOCTL_LOGIN_GROUP_APPLICATION:
+		memcpy(&ns_grp, connection_data, sizeof(gid_t));
+		grp = make_kgid(current_user_ns(), ns_grp);
+		if (!gid_valid(grp) || !in_egroup_p(grp)) {
+			rc = -EPERM;
+			goto out_free_name;
+		}
+
+		application_id = tee_session_get_application_id();
+		name_len = snprintf(name, TEE_UUID_NS_NAME_SIZE,
+				    "gid=%x:app=%s", grp.val, application_id);
+		tee_session_free_application_id(application_id);
 		if (name_len >= TEE_UUID_NS_NAME_SIZE) {
 			rc = -E2BIG;
 			goto out_free_name;
