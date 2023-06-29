@@ -31,11 +31,16 @@
 #define MII_DP83822_FCSCR	0x14
 #define MII_DP83822_RCSR	0x17
 #define MII_DP83822_RESET_CTRL	0x1f
+#define MII_DP83822_LDCSEL	0x404
 #define MII_DP83822_GENCFG	0x465
 #define MII_DP83822_SOR1	0x467
 
 /* GENCFG */
 #define DP83822_SIG_DET_LOW	BIT(0)
+
+/* Line Driver Class Selection (LDCSEL) */
+#define DP83822_LDCSEL_CLASS_A	0x24
+#define DP83822_LDCSEL_CLASS_B	0x20
 
 /* Control Register 2 bits */
 #define DP83822_FX_ENABLE	BIT(14)
@@ -118,6 +123,7 @@ struct dp83822_private {
 	bool fx_signal_det_low;
 	int fx_enabled;
 	u16 fx_sd_enable;
+	bool line_driver_class_a;
 };
 
 static int dp83822_set_wol(struct phy_device *phydev,
@@ -416,6 +422,16 @@ static int dp83822_config_init(struct phy_device *phydev)
 					MII_DP83822_RCSR, DP83822_RGMII_MODE_EN);
 	}
 
+	/* Configure line driver class */
+	if (dp83822->line_driver_class_a)
+		/* full MLT-3 on both Tx+ and Tx–.*/
+		phy_write_mmd(phydev, DP83822_DEVADDR, MII_DP83822_LDCSEL,
+			      DP83822_LDCSEL_CLASS_A);
+	else
+		/* reduced MLT-3 */
+		phy_write_mmd(phydev, DP83822_DEVADDR, MII_DP83822_LDCSEL,
+			      DP83822_LDCSEL_CLASS_B);
+
 	if (dp83822->fx_enabled) {
 		err = phy_modify(phydev, MII_DP83822_CTRL_2,
 				 DP83822_FX_ENABLE, 1);
@@ -506,6 +522,12 @@ static int dp83822_of_init(struct phy_device *phydev)
 	if (!dp83822->fx_enabled)
 		dp83822->fx_enabled = device_property_present(dev,
 							      "ti,fiber-mode");
+
+	/* DP83822 defaults to line driver class B - enable configuration for
+	 * class A
+	 */
+	dp83822->line_driver_class_a = device_property_present(dev,
+							       "ti,line-driver-class-a");
 
 	return 0;
 }
