@@ -27,6 +27,14 @@ properties:
   reg:
     maxItems: 1
 
+  ti,line-driver-class-a:
+    type: boolean
+    description: |
+       DP83822 PHY's line driver selection to class A.
+       Sets the DP83822 line driver as class A i.e. program full MLT-3 on both
+       Tx+ and Tx-.
+       If not defined class B will be configured (default) i.e. reduced MLT-3.
+
   ti,link-loss-low:
     type: boolean
     description: |
